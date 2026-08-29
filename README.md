@@ -32,7 +32,7 @@
 
 ```bash
 # 一行安装（auto-detect runtime）
-npx skills add LawlietLuoJia/requirement-review
+npx skills add LawlietJia/requirement-review
 ```
 
 <details>
