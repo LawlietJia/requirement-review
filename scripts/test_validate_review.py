@@ -21,6 +21,8 @@ def row(fid="F-001", dim="D3", imp="P0", ev="已确认", rel="阻断", loc="§2.
 
 def make_dir(ledger_rows, matrix=None):
     d = tempfile.mkdtemp(prefix="vr-test-")
+    import atexit, shutil
+    atexit.register(shutil.rmtree, d, True)  # 防泄漏：历史累积过 114 个残留目录
     with open(os.path.join(d, "issues-ledger.md"), "w") as f:
         f.write(LEDGER_HEADER + "\n" + SEP + "\n" + "\n".join(ledger_rows) + "\n")
     # 合法基线：补齐必需产物（个别用例按需覆盖）
