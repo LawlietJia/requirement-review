@@ -10,7 +10,7 @@
 - `research-log.md` — 调研审计（schema 见 research-protocol.md）
 - `报告.md` — 评审报告（模板见下）
 - `source.docx` — 原 docx 副本（S0 条件产物，仅有 docx 输入时；**只读**——S9 回写基于它，sha256 前后须一致）
-- `<原名>-评审批注-<日期>.docx` — 评审批注副本（S9 条件产物；Word 批注直挂原文处，author=requirement-review，原件自带他人批注保留不动）
+- `source-评审批注-<日期>.docx` — 评审批注副本（S9 条件产物；文件名取 source.docx 的 stem，与 writeback_docx.py 生成口径一致；Word 批注直挂原文处，author=requirement-review，原件自带他人批注保留不动）
 - `docx-writeback.md` — 回写状态清单（S9 条件产物；validate_review.py section 11 校验对象，状态枚举 已批注/低置信/章节降级/未匹配）
 - 迭代复审时：目录内记上轮目录相对路径；两版需求先语义 diff（按原文锚定，防编号漂移），复审只检上轮问题销号 + 改动需求 + 依赖闭包涟漪
 
@@ -74,7 +74,9 @@
 完整台账表（或链接 issues-ledger.md）
 
 ### （仅有 docx 输入时）6. 批注副本说明
-副本文件名｜覆盖 F-ID x/y（未覆盖列表+原因分类：摘录问题/转换噪声；**低置信列表——模糊匹配的批注位置须人工核对**）｜打开方式：Word/WPS 审阅窗格查看批注（author=requirement-review）；存在未匹配或低置信时本节必出（validator R5 强制）
+**本节在 S9c 回写完成后回填实际数据，不要预写。** 副本文件名（`source-评审批注-<日期>.docx`）｜覆盖 F-ID x/y（未覆盖列表+原因分类：摘录问题/转换噪声；**低置信列表——模糊匹配的批注位置须人工核对**）｜打开方式：Word/WPS 审阅窗格查看批注（author=requirement-review）；存在未匹配或低置信时本节必出（validator R5 强制）
+
+**条件节省略规则**：条件出不满足时整节省略、**保留原编号不重排**（如无方案时第 6 节后直接第 8 节）——编号是节的稳定锚点，重排会破坏跨轮复审的引用。
 
 ### （仅有业务方案时）7. 覆盖度矩阵
 BIZ↔REQ 六态矩阵 + gap 清单 + gold plating 确认清单 + 必须覆盖类覆盖率
