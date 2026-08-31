@@ -3,9 +3,9 @@
 
 只检查格式与硬约束（证据结构存在性），不判断证据真实性/相关性/充分性（语义评审与人工抽检职责）。
 用法: python3 validate_review.py <评审工作目录>
-退出码: 0=零违规, 1=存在违规。输出 JSON: {"violations": [...], "findings": [...], "stats": {...}}
+退出码: 0=零违规, 1=存在违规。输出 JSON: {"violations": [...], "warnings": [...], "findings": [...], "stats": {...}}
 """
-import json, os, re, sys
+import importlib.util, json, os, re, sys, zipfile
 
 VALID_IMPACT = {"P0", "P1", "P2", "P3"}
 VALID_EVIDENCE = {"已确认", "较高可信", "条件成立", "待核验"}
@@ -115,7 +115,7 @@ def validate(workdir):
 
     ledger = os.path.join(workdir, "issues-ledger.md")
     if not os.path.exists(ledger):
-        return {"violations": v + ["issues-ledger.md 不存在"], "findings": [], "stats": {}}
+        return {"violations": v + ["issues-ledger.md 不存在"], "warnings": [], "findings": [], "stats": {}}
 
     cols, rows, malformed = parse_ledger(ledger)
     v.extend(malformed)
@@ -312,12 +312,95 @@ def validate(workdir):
                 if mc and int(mc.group(1)) != actual:
                     v.append(f"报告统计与台账不符：{key} 报告={mc.group(1)} 台账={actual}")
 
+    # 11. docx 回写三件套自洽（V1.7.0；仅有 source*.docx 时触发，文件名排除口径与 writeback_docx.find_source 一致）
+    w = []
+    try:
+        src_docx = [f for f in os.listdir(workdir) if f.lower().endswith(".docx")
+                    and f.startswith("source") and "评审批注" not in f]
+    except OSError:
+        src_docx = []
+    if src_docx:
+        VALID_WB_STATUS = ("已批注", "低置信", "章节降级", "未匹配")
+        WB_AUTHOR = "requirement-review"
+        wb_path = os.path.join(workdir, "docx-writeback.md")
+        copies = sorted(f for f in os.listdir(workdir)
+                        if f.endswith(".docx") and "评审批注" in f)
+        if not os.path.exists(wb_path) or not copies:
+            # R1：三件套存在性。环境缺 python-docx（开源用户）时降级为提示不硬阻——
+            # 回写管线装不上不应卡死整个评审交付
+            msg = ("存在 source*.docx 但回写三件套不完整（缺 "
+                   + ("docx-writeback.md" if not os.path.exists(wb_path) else "评审批注副本")
+                   + "）——须跑 scripts/writeback_docx.py 生成")
+            if importlib.util.find_spec("docx") is not None:
+                v.append(msg)
+            else:
+                w.append("[提示] " + msg + "（当前环境缺 python-docx>=1.2.0，安装后重跑；不阻断交付）")
+        else:
+            wcols, wrows, _wm = parse_ledger(wb_path)
+            wtext = open(wb_path, encoding="utf-8").read()
+            detail = wtext.split("未匹配明细", 1)[-1] if "未匹配明细" in wtext else ""
+            if wcols is None:
+                v.append("docx-writeback.md 表头缺失（须为 | F-ID | 片段数 | 已标注处数 | 状态 | 备注 |）")
+                wrows = []
+            else:
+                open_fids = {r["F-ID"] for r in findings if r.get("状态") == "打开"}
+                wb_fids = {r.get("F-ID", "") for r in wrows if r.get("F-ID")}
+                for fid in sorted(open_fids - wb_fids):
+                    v.append(f"回写状态表缺打开态 Finding {fid}（每个 状态=打开 的 F-ID 都必须有回写状态行）")
+                for fid in sorted(wb_fids - open_fids):
+                    v.append(f"回写状态表多出台账外 F-ID {fid}")
+            placed_sum, n_unmatched, n_lowconf = 0, 0, 0
+            for wr in wrows:
+                fid = wr.get("F-ID", "?")
+                st = wr.get("状态", "")
+                if st not in VALID_WB_STATUS:
+                    v.append(f"docx-writeback {fid}: 状态非法 '{st}'（允许 {list(VALID_WB_STATUS)}）")
+                    continue
+                try:
+                    placed = int(wr.get("已标注处数", ""))
+                except ValueError:
+                    v.append(f"docx-writeback {fid}: 已标注处数非整数 '{wr.get('已标注处数')}'")
+                    continue
+                if st == "未匹配":
+                    n_unmatched += 1
+                    if placed != 0:
+                        v.append(f"docx-writeback {fid}: 状态=未匹配 但已标注处数 {placed}≠0")
+                    elif fid not in detail:
+                        v.append(f"docx-writeback {fid}: 状态=未匹配 但未匹配明细中无此 F-ID 条目")
+                else:
+                    if st == "低置信":
+                        n_lowconf += 1
+                    if placed < 1:
+                        v.append(f"docx-writeback {fid}: 状态={st} 但已标注处数为 {placed}（须≥1）")
+                    else:
+                        placed_sum += placed
+            # R4：副本批注计数（author 过滤口径——原件可能自带他人批注，实测 CR261622 有 3 条）
+            try:
+                with zipfile.ZipFile(os.path.join(workdir, copies[0])) as zf:
+                    n_rr = 0
+                    if "word/comments.xml" in zf.namelist():
+                        cxml = zf.read("word/comments.xml").decode("utf-8", errors="ignore")
+                        n_rr = sum(1 for _i, a in re.findall(
+                            r'<w:comment [^>]*?w:id="(\d+)"[^>]*?w:author="([^"]*)"', cxml)
+                            if a == WB_AUTHOR)
+            except (OSError, zipfile.BadZipFile):
+                n_rr = None
+                v.append("评审批注副本无法作为 zip 打开（文件损坏？）")
+            if n_rr is not None and n_rr != placed_sum:
+                v.append(f"副本批注数 {n_rr} ≠ 状态表已标注处数合计 {placed_sum}（author={WB_AUTHOR} 口径）")
+            # R5：未匹配/低置信 → 报告须有批注副本说明节（未覆盖与低置信须向作者披露）
+            if n_unmatched or n_lowconf:
+                rp = os.path.join(workdir, "报告.md")
+                rtext2 = open(rp, encoding="utf-8").read() if os.path.exists(rp) else ""
+                if "批注副本" not in rtext2:
+                    v.append("存在未匹配/低置信 Finding 但报告缺'批注副本'说明节（未覆盖与低置信清单须向作者披露）")
+
     stats = {
         "findings": len(findings),
         "by_impact": {k: sum(1 for r in findings if r.get("impact_level") == k) for k in VALID_IMPACT},
         "blocking": sum(1 for r in findings if rel_of(r) == "阻断"),
     }
-    return {"violations": v, "findings": findings, "stats": stats}
+    return {"violations": v, "warnings": w, "findings": findings, "stats": stats}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

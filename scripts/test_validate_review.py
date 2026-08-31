@@ -443,6 +443,116 @@ def t_sug_valid_ok():
     r = vr.validate(d)
     assert not any("建议" in v and "标签" in v for v in r["violations"]), r["violations"]
 
+# ---------------- section 11: docx 回写三件套（V1.7.0，TDD 先于实现） ----------------
+import zipfile as _zip
+
+WB_HEADER = "| F-ID | 片段数 | 已标注处数 | 状态 | 备注 |"
+WB_SEP = "|---|---|---|---|---|"
+
+def make_min_docx(path, rr=0, others=0):
+    """手写最小 docx zip（纯 stdlib）：word/comments.xml 含 rr 条 requirement-review
+    批注 + others 条他人批注。validator 只 zipfile 读 XML 计数，无需 python-docx。"""
+    comments = "".join(
+        f'<w:comment w:id="{i}" w:author="requirement-review"><w:p/></w:comment>'
+        for i in range(rr)) + "".join(
+        f'<w:comment w:id="{100 + i}" w:author="mayinyin"><w:p/></w:comment>'
+        for i in range(others))
+    with _zip.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types/>')
+        z.writestr("word/document.xml", '<?xml version="1.0"?><w:document/>')
+        z.writestr("word/comments.xml",
+                   '<?xml version="1.0"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   + comments + "</w:comments>")
+
+def make_writeback(d, rows):
+    """rows: [(fid, placed, status, note)]；未匹配行自动补未匹配明细。"""
+    lines = ["# docx 回写状态", "", "- 原件: source.docx", "- 副本: source-评审批注-20260831.docx",
+             "- 覆盖率: x/y", "", WB_HEADER, WB_SEP]
+    lines += [f"| {fid} | 1 | {placed} | {st} | {note} |" for fid, placed, st, note in rows]
+    un = [fid for fid, _p, st, _n in rows if st == "未匹配"]
+    if un:
+        lines += ["", "## 未匹配明细", ""]
+        lines += [f"- {fid} 第1处摘录「xxx」：L1/L1.5/L2/L2.5/L3 均未命中（摘录非原文或属转换噪声）" for fid in un]
+    with open(os.path.join(d, "docx-writeback.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+def add_docx_env(d, wb_rows, copy_rr):
+    make_min_docx(os.path.join(d, "source.docx"))
+    make_min_docx(os.path.join(d, "source-评审批注-20260831.docx"), rr=copy_rr, others=1)
+    make_writeback(d, wb_rows)
+
+@case("回写节不触发（无docx输入零违规）")
+def t_wb_off():
+    vr = load()
+    r = vr.validate(make_dir([row()]))
+    assert r["violations"] == [], r["violations"]
+
+@case("有source无状态文件违规")
+def t_wb_missing_status():
+    vr = load()
+    d = make_dir([row()])
+    make_min_docx(os.path.join(d, "source.docx"))
+    make_min_docx(os.path.join(d, "source-评审批注-20260831.docx"), rr=1)
+    r = vr.validate(d)
+    assert any("回写" in v and "docx-writeback" in v for v in r["violations"]), r["violations"]
+
+@case("有状态文件无副本违规")
+def t_wb_missing_copy():
+    vr = load()
+    d = make_dir([row()])
+    make_min_docx(os.path.join(d, "source.docx"))
+    make_writeback(d, [("F-001", 1, "已批注", "")])
+    r = vr.validate(d)
+    assert any("评审批注" in v and "副本" in v for v in r["violations"]), r["violations"]
+
+@case("状态表缺打开态F-ID违规")
+def t_wb_missing_fid():
+    vr = load()
+    d = make_dir([row(fid="F-001"), row(fid="F-002", imp="P2", rel="不影响放行")])
+    add_docx_env(d, [("F-001", 1, "已批注", "")], copy_rr=1)
+    r = vr.validate(d)
+    assert any("F-002" in v and "缺" in v for v in r["violations"]), r["violations"]
+
+@case("状态表多出台账外F-ID违规")
+def t_wb_extra_fid():
+    vr = load()
+    d = make_dir([row()])
+    add_docx_env(d, [("F-001", 1, "已批注", ""), ("F-999", 1, "已批注", "")], copy_rr=2)
+    r = vr.validate(d)
+    assert any("F-999" in v and "多出" in v for v in r["violations"]), r["violations"]
+
+@case("已批注状态处数为0违规")
+def t_wb_zero_placed():
+    vr = load()
+    d = make_dir([row()])
+    add_docx_env(d, [("F-001", 0, "已批注", "")], copy_rr=0)
+    r = vr.validate(d)
+    assert any("已标注处数" in v for v in r["violations"]), r["violations"]
+
+@case("副本批注数与状态不符违规")
+def t_wb_count_mismatch():
+    vr = load()
+    d = make_dir([row()])
+    add_docx_env(d, [("F-001", 1, "已批注", "")], copy_rr=2)
+    r = vr.validate(d)
+    assert any("批注数" in v and "≠" in v for v in r["violations"]), r["violations"]
+
+@case("未匹配但报告无批注副本节违规")
+def t_wb_unmatched_no_section():
+    vr = load()
+    d = make_dir([row()])
+    add_docx_env(d, [("F-001", 0, "未匹配", "")], copy_rr=0)
+    r = vr.validate(d)
+    assert any("批注副本" in v for v in r["violations"]), r["violations"]
+
+@case("三件套自洽零违规")
+def t_wb_consistent():
+    vr = load()
+    d = make_dir([row()])
+    add_docx_env(d, [("F-001", 1, "已批注", "")], copy_rr=1)
+    r = vr.validate(d)
+    assert r["violations"] == [], r["violations"]
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in CASES:
