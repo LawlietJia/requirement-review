@@ -44,7 +44,7 @@ AUTHOR = "requirement-review"
 INITIALS = "RR"
 SIGNATURE = "—— requirement-review 自动回写"
 DEFAULT_CAP = 3   # 多处命中的挂注上限。曾为 10——通用短句（"参见《总册》"）会撒网近全文，
-                  # 读者看到的批注 2/3 与该 Finding 无关（真实银行软需实测）；真需逐处提示的
+                  # 读者看到的批注 2/3 与该 Finding 无关（真实银行软需 实测）；真需逐处提示的
                   # （如功能编号全占位）由批注文本写明"全文共 N 处"，不必逐处挂注。
 L3_THRESHOLD = 0.6
 VALID_WB_STATUS = ("已批注", "低置信", "章节降级", "未匹配")
@@ -60,7 +60,7 @@ def normalize(text: str) -> str:
     t = unicodedata.normalize("NFKC", str(text))
     for zw in ("​", "‌", "‍", "﻿", " "):
         t = t.replace(zw, "")
-    t = re.sub(r"\\([*_\[\]()#<>~`|])", r"\1", t)  # 剥 md 表格转义（\* 等）——docx 原文无反斜杠，不剥则含公式摘录永不中（真实银行软需实测）
+    t = re.sub(r"\\([*_\[\]()#<>~`|])", r"\1", t)  # 剥 md 表格转义（\* 等）——docx 原文无反斜杠，不剥则含公式摘录永不中（真实银行软需 F-004）
     for a, b in (("“", '"'), ("”", '"'), ("‘", "'"), ("’", "'")):
         t = t.replace(a, b)
     return re.sub(r"\s+", "", t)
@@ -165,7 +165,7 @@ def is_heading(para) -> bool:
 def heading_level(para) -> int:
     """标题层级：Heading N / 标题 N → N；非标题 0。层级用于区间跨度——
     章节区间必须**包含全部子节**（『国别风险评级查询』到其『主界面』子标题就断了，
-    子节里的列表表格全被区间挡住——真实银行软需实测 F-004 万元句因此未定位）。"""
+    子节里的列表表格全被区间挡住——真实银行软需 实测 F-004 万元句因此未定位）。"""
     try:
         name = (para.style.name or "") if para.style else ""
     except Exception:
@@ -177,7 +177,7 @@ def heading_level(para) -> int:
 def _full_text(element) -> str:
     """XML 层全量文本：遍历全部 w:t 节点（**含 w:hyperlink 内的 run**）。
 
-    python-docx 的 para.text / cell.text 不含超链接内文本——真实银行软需实测 F-019
+    python-docx 的 para.text / cell.text 不含超链接内文本——真实银行软需 实测 F-019
     的摘录「点击跳转额度中心"国别风险-国别风险限额台账"页面」整句在 hyperlink 里，
     para.text 只剩 '额度中心""展示限额使用情况。'，按 .text 建索引必然漏检。"""
     from docx.oxml.ns import qn
@@ -195,7 +195,7 @@ def _all_runs(para):
 def _looks_like_toc(raw_text: str, para_xml: str, rel_pos: float) -> bool:
     """目录条目段识别：①段内含 _Toc 书签超链接（Word 目录条目的结构特征）；
     ②或位于文档前 20% 且为"短文本+行尾页码"形态（如『3.5. 数据管理目标- 62 -』）。
-    目录行永不作锚点——摘录取自目录形态文本时，正文命中之前会先撞上目录（真实银行软需实测）。"""
+    目录行永不作锚点——摘录取自目录形态文本时，正文命中之前会先撞上目录（真实银行软需 实测）。"""
     if "_Toc" in (para_xml or ""):
         return True
     t = (raw_text or "").strip()
@@ -262,11 +262,11 @@ def _loc_words(loc: str) -> tuple:
     - 章节号（§3.5）单独提取：标题带编号的文档可直接前缀匹配；
     - §节名（§3.1.2.1 国别风险外部评级结果-新增 → 『国别风险外部评级结果』）：
       **银行软需 docx 的正文标题通常不带编号**（编号在目录行/自动编号里，正文标题是
-      纯文字），§号本身匹配不到标题，必须拿 §号后紧跟的节名对齐标题（真实银行软需实测）。
+      纯文字），§号本身匹配不到标题，必须拿 §号后紧跟的节名对齐标题（真实银行软需 实测）。
       节名取 §号后到 -/（/【 边界的第一段，≥3 字（『新增』『详情』等 2 字节名歧义
       过大，放弃——由整串/摘录兜底）。
     - 整串（去编号与圆括号注记）与【】内词仍提取。括号注记（（L1816-1818）（8 节）
-      等）必须剥除，否则整串永远匹配不到标题（真实银行软需实测）。"""
+      等）必须剥除，否则整串永远匹配不到标题（真实银行软需 实测）。"""
     s = loc or ""
     nums = [n.rstrip(".") for n in re.findall(r"[§]\s*([\d.]+)", s)]
     names = []
@@ -297,7 +297,7 @@ def section_candidates(sections, blocks, loc) -> tuple:
     ①章节号前缀（标题带编号的文档）；②§节名（标题 == 节名 或 startswith 节名）；
     ③整串 key（≥4 字，substring in 标题）；④【】词组——每个词都必须**恰等于**某标题
     才取该标题区间（substring 的 any/all 都会把『国家（地区）』错配到『国家（地区）
-    风险系数及转换系数』等含同词的无关章节，真实银行软需实测 F-011/F-028 降级锚因此挂错）。
+    风险系数及转换系数』等含同词的无关章节，真实银行软需 实测 F-011/F-028 降级锚因此挂错）。
     全失败退全文（filtered=False，由 match_finding 施加『仅挂首处』约束）。"""
     all_idx = set(range(len(blocks)))
     words, nums, names = _loc_words(loc)
@@ -351,7 +351,7 @@ def _l3_match(chunk: str, blocks, cand, cap: int):
     toks = _tokenize(chunk)
     if not toks:
         return [], 0, False
-    # 数字类 token 必须整词边界命中（"30" 不得子串命中 "20260630"——真实银行软需实测
+    # 数字类 token 必须整词边界命中（"30" 不得子串命中 "20260630"——真实银行软需 实测
     # 修订记录日期行因此被误挂）；tokenize 滤掉单字符后只剩数字 token 时（表格行摘录
     # "\| 7 \| D \| 0 \| 是 \| 30 \| 是 \|" 只剩 "30"），单个数字的覆盖度完全不可信，
     # 拒绝 L3 兜底，让该 chunk 走未定位路径。
@@ -451,7 +451,7 @@ def match_finding(row, blocks, sections, cap) -> FindingResult:
     if not filtered:
         # 定位区间未解析（cand 退化为全文）：通用短句全文撒网风险最高（"参见《总册》"
         # 类句子全文十余处，命中前 3 处也多半与该 Finding 无关）——每 chunk 只挂首处，
-        # 其余在 note 声明（真实银行软需实测：F-038 曾因此把 1 处问题挂成 10 处）。
+        # 其余在 note 声明（真实银行软需 实测：F-038 曾因此把 1 处问题挂成 10 处）。
         for cr in cres:
             if len(cr.hits) > 1:
                 cr.total_hits = max(cr.total_hits, len(cr.hits))
@@ -503,37 +503,78 @@ def fmt_text(text: str) -> str:
     return t.strip()
 
 
+_PROCESS_NOTE = re.compile(
+    r"[（(][^（）()]*?(?:Run\s*[AB]|两\s*run|双\s*run|双跑|上轮复现补录|上轮评审|机械复核|"
+    r"MC-\d+|run\s*间|盲测|升格|漏检|融合|三方一致|一致发现|独立发现)[^（）()]*?[）)]")
+
+
+def strip_process_notes(t: str) -> str:
+    """剥离评审内部过程注记（Run A/B、双跑、补录来源、复核方式等）。
+    批注与报告面向**需求作者**——过程溯源只属于 merge-map 与台账证据来源列；
+    作者看到『Run A 独有发现』只会困惑（真实银行软需实测用户反馈）。"""
+    prev = None
+    while prev != t:
+        prev = t
+        t = _PROCESS_NOTE.sub("", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    t = re.sub(r"[：:，。；]\s*[，。；]", lambda m: m.group(0)[0], t)
+    return t.strip(" ，。；")
+
+
+def _topic_of(desc: str) -> str:
+    """描述列 → 一句话主题（首个冒号/逗号/句号前片段，剥过程注记）。
+    用于『相关意见：F-016（内部调整原因与分值无联动）』——裸编号作者无法对应。"""
+    d = strip_process_notes(desc or "")
+    d = re.sub(r"^[^：:]{0,24}[：:]\s*", "", d, count=1) if "：" in d[:30] or ":" in d[:30] else d
+    for sep in ("，", "。", "；", "——"):
+        if sep in d:
+            d = d.split(sep)[0]
+            break
+    return d[:18]
+
+
 def _release_base(val: str) -> str:
     m = re.match(r"^(阻断|条件放行|待澄清|不影响放行)", val or "")
     return m.group(1) if m else (val or "?")
 
 
 def build_comment_text(row: dict, seq_total: int, seq_i: int,
-                       table_rows: int | None, low_conf: bool) -> str:
+                       table_rows: int | None, low_conf: bool,
+                       anchor_text: str = "", fid_topics: dict | None = None) -> str:
+    """批注正文。面向需求作者的三个可读性契约：
+    ① 内部过程注记一律剥离（strip_process_notes）；
+    ② 多处标注时写明本处针对的原文（作者第一眼要知道这处批注为什么挂这）；
+    ③ 相关 F-ID 带一句话主题（裸编号作者无法对应）。"""
     lines = []
     if low_conf:
-        lines.append("⚠ 位置为模糊匹配，请人工核对")
+        lines.append("⚠ 本处为大意定位，请结合上下文核对")
     lines.append(f"【评审意见 {row['F-ID']}】{row.get('impact_level', '?')} · "
                  f"{_release_base(row.get('release_effect', ''))}（{row.get('evidence_status', '?')}）")
-    lines.append(f"问题：{fmt_text(row.get('问题描述与后果', ''))}")
+    lines.append(f"问题：{strip_process_notes(fmt_text(row.get('问题描述与后果', '')))}")
     if (row.get("修改建议") or "").strip():
-        lines.append(f"建议：{fmt_text(row['修改建议'])}")
+        lines.append(f"建议：{strip_process_notes(fmt_text(row['修改建议']))}")
     if row.get("impact_level") in ("P0", "P1") and (row.get("关闭条件") or "").strip():
-        lines.append(f"关闭条件：{fmt_text(row['关闭条件'])}")
+        lines.append(f"关闭条件：{strip_process_notes(fmt_text(row['关闭条件']))}")
     q = (row.get("澄清问题") or "").strip()
     if q and q != "无":
-        lines.append(f"待澄清：{fmt_text(q)}")
+        lines.append(f"待澄清：{strip_process_notes(fmt_text(q))}")
     refs = set(re.findall(r"\bF-\d{3,}\b",
                           (row.get("问题描述与后果", "") or "")
                           + (row.get("修改建议", "") or "")
                           + (row.get("定位", "") or "")))
     refs.discard(row.get("F-ID", ""))
     if refs:
-        lines.append("关联：" + "、".join(sorted(refs)))
+        parts = []
+        for r in sorted(refs):
+            top = (fid_topics or {}).get(r, "")
+            parts.append(f"{r}（{top}）" if top else r)
+        lines.append("相关意见：" + "、".join(parts))
     if table_rows:
-        lines.append(f"本问题涉及本表 {table_rows} 行")
+        lines.append(f"本条意见涉及本表 {table_rows} 行")
     elif seq_total > 1:
-        lines.append(f"本问题共 {seq_total} 处标注（本处 {seq_i}/{seq_total}）")
+        at = anchor_text.strip()
+        where = f"，本处针对原文『{at[:22]}…』" if at else ""
+        lines.append(f"本条意见在文档共 {seq_total} 处相关位置有标注，本处是第 {seq_i} 处{where}")
     lines.append(SIGNATURE)
     return "\n".join(lines)
 
@@ -566,6 +607,8 @@ def write_comments(doc, results: list, blocks) -> int:
     fail-closed：命中块全部不可锚导致 placed=0 时，状态强制归"未匹配"——
     状态与实际写入必须一致（防"已批注"却无批注的失实状态）。"""
     written = 0
+    fid_topics = {fr.fid: _topic_of(fr.row.get("问题描述与后果", ""))
+                  for fr in results if fr.status != "未匹配"}
     for fr in results:
         if fr.status == "未匹配" or not fr.anchors:
             continue
@@ -580,7 +623,8 @@ def write_comments(doc, results: list, blocks) -> int:
             if not runs:
                 fr.notes.append(f"块{bidx}不可锚（空段落/零 run），已跳过")
                 continue
-            text = build_comment_text(fr.row, len(points), i, table_rows, low_conf)
+            text = build_comment_text(fr.row, len(points), i, table_rows, low_conf,
+                                      b.text_norm, fid_topics)
             doc.add_comment(runs=runs, text=text, author=AUTHOR, initials=INITIALS)
             written += 1
             fr.placed += 1
