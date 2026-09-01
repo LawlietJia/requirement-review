@@ -40,9 +40,8 @@ except ImportError:
     print("错误: 需要 python-docx>=1.2.0（uv pip install python-docx）", file=sys.stderr)
     sys.exit(2)
 
-AUTHOR = "requirement-review"
-INITIALS = "RR"
-SIGNATURE = "—— requirement-review 自动回写"
+AUTHOR = "评审人"          # Word 审阅者显示名——批注须可当作人工评审交付，不留工具痕迹
+INITIALS = "评"
 DEFAULT_CAP = 3   # 多处命中的挂注上限。曾为 10——通用短句（"参见《总册》"）会撒网近全文，
                   # 读者看到的批注 2/3 与该 Finding 无关（真实银行软需 实测）；真需逐处提示的
                   # （如功能编号全占位）由批注文本写明"全文共 N 处"，不必逐处挂注。
@@ -496,11 +495,16 @@ def match_finding(row, blocks, sections, cap) -> FindingResult:
 # ---------------------------------------------------------------- C 批注写入
 
 def fmt_text(text: str) -> str:
-    """台账文本 → 批注纯文本格式归一化：去 markdown 残留，§x.x → 第x.x节。"""
+    """台账文本 → 批注纯文本格式归一化：去 markdown 残留，§x.x → 第x.x节，
+    清除 md 行号标记（L193/L431 类——作者看的是 Word 文档，行号无从对应，
+    定位一律用章节名/功能名/表格行内容）。"""
     t = (text or "").replace("\\|", "|")
     t = re.sub(r"§\s*([\d.]+)", r"第\1节", t)
+    t = re.sub(r"[Ll]\d+(?:[-–—~至]\d+)?(?:/[Ll]?\d+(?:[-–—~至]\d+)?)*", "", t)
+    t = re.sub(r"[（(]\s*[，。；、]?\s*[）)]", "", t)   # 剥行号后残留的空括号
+    t = re.sub(r"\s{2,}", " ", t)
     t = t.replace("**", "").replace("`", "")
-    return t.strip()
+    return t.strip(" ，。；、")
 
 
 _PROCESS_NOTE = re.compile(
@@ -575,7 +579,6 @@ def build_comment_text(row: dict, seq_total: int, seq_i: int,
         at = anchor_text.strip()
         where = f"，本处针对原文『{at[:22]}…』" if at else ""
         lines.append(f"本条意见在文档共 {seq_total} 处相关位置有标注，本处是第 {seq_i} 处{where}")
-    lines.append(SIGNATURE)
     return "\n".join(lines)
 
 

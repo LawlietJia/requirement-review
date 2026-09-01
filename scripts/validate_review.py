@@ -321,7 +321,7 @@ def validate(workdir):
         src_docx = []
     if src_docx:
         VALID_WB_STATUS = ("已批注", "低置信", "章节降级", "未匹配")
-        WB_AUTHOR = "requirement-review"
+        WB_AUTHOR = "评审人"
         wb_path = os.path.join(workdir, "docx-writeback.md")
         copies = sorted(f for f in os.listdir(workdir)
                         if f.endswith(".docx") and "评审批注" in f)
@@ -374,7 +374,7 @@ def validate(workdir):
                         v.append(f"docx-writeback {fid}: 状态={st} 但已标注处数为 {placed}（须≥1）")
                     else:
                         placed_sum += placed
-            # R4：副本批注计数（author 过滤口径——原件可能自带他人批注，实测 CR261622 有 3 条）
+            # R4：副本批注计数（author 过滤口径——原件可能自带他人批注，实测 真实银行软需 有 3 条）
             try:
                 with zipfile.ZipFile(os.path.join(workdir, copies[0])) as zf:
                     n_rr = 0
