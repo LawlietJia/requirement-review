@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "prompt": "帮我评审这份需求说明书 <path>/需求.md，完整评审，输出报告",
+    "expected": "S0-S9 十步执行：req-items 条目化、13 列台账（三字段定级）、四产物齐、validate 零违规、三档结论（存在阻断→不通过）、建议节三分类标签、澄清清单带候选选项",
+    "实测映射": "已有 17 个 full_test run（blind×4 双跑+regression×10+v162-trial+裸跑基线）；裸跑基线=不带 skill 的 baseline 对照；裁决计分 rescore-final-v164.json"
+  },
+  {
+    "id": 2,
+    "prompt": "半小时后上会，帮我快速过一遍这份需求有没有大问题",
+    "expected": "快速体检模式：全维浅扫每维只查 P0/P1 子集不跳维度、不替换完整评审的声明、30 分钟内产物完整",
+    "实测映射": "阶段四保留集跑过完整+快速双模式；无专测数据（dry_run 备注）"
+  },
+  {
+    "id": 3,
+    "prompt": "这是业务方案（PPT 转的 md），评审需求书 <path>/需求.md 是否实现了方案的全部设计",
+    "expected": "S3 方案原子化+形态分级（粗粒度方案按'方案声明'建 BIZ 表）、S7 双向覆盖六态矩阵、gold plating 候选、必须覆盖类分级门槛",
+    "实测映射": "阶段四 v3.8+朱总汇报覆盖用例跑过（粗粒度路径验证）；无近期复测（dry_run 备注）"
+  },
+  {
+    "id": 4,
+    "prompt": "评审这份 docx 需求书 <path>/需求.docx，我要能直接在 Word 里看到每个问题挂在原文哪里",
+    "expected": "S0 复制原件为 source.docx（只读）+ markitdown 转 md 走评审 + S9 跑 writeback_docx.py 生成批注副本与 docx-writeback.md 状态清单 + validator section 11 零违规 + 报告含批注副本说明节（覆盖率/低置信/未匹配披露）",
+    "实测映射": "V1.7.0 端到端 full_test 在案（某行信贷软需 真文档：28 Finding、56 条 RR 批注、原文摘录命中 22/23=95.7%、5 条注入内容正确未匹配、原件 sha256 前后一致、他人批注保留、validator 零违规）"
+  }
+]

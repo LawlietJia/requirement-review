@@ -43,7 +43,9 @@ except ImportError:
 AUTHOR = "requirement-review"
 INITIALS = "RR"
 SIGNATURE = "—— requirement-review 自动回写"
-DEFAULT_CAP = 10
+DEFAULT_CAP = 3   # 多处命中的挂注上限。曾为 10——通用短句（"参见《总册》"）会撒网近全文，
+                  # 读者看到的批注 2/3 与该 Finding 无关（真实银行软需实测）；真需逐处提示的
+                  # （如功能编号全占位）由批注文本写明"全文共 N 处"，不必逐处挂注。
 L3_THRESHOLD = 0.6
 VALID_WB_STATUS = ("已批注", "低置信", "章节降级", "未匹配")
 COMMENT_COUNT_PAT = re.compile(r'<w:comment [^>]*?w:id="(\d+)"[^>]*?w:author="([^"]*)"')
@@ -58,6 +60,7 @@ def normalize(text: str) -> str:
     t = unicodedata.normalize("NFKC", str(text))
     for zw in ("​", "‌", "‍", "﻿", " "):
         t = t.replace(zw, "")
+    t = re.sub(r"\\([*_\[\]()#<>~`|])", r"\1", t)  # 剥 md 表格转义（\* 等）——docx 原文无反斜杠，不剥则含公式摘录永不中（真实银行软需实测）
     for a, b in (("“", '"'), ("”", '"'), ("‘", "'"), ("’", "'")):
         t = t.replace(a, b)
     return re.sub(r"\s+", "", t)
@@ -84,13 +87,26 @@ class Block:
     table_id: int        # 段落为 -1
     row_idx: int
     heading: str         # 归一化标题文本，非标题为 ""
+    is_toc: bool = False # 目录条目段——永不作锚点（摘录与目录行同文时曾误挂目录）
+    level: int = 0       # 标题层级（Heading N→N，非标题 0）——供区间含子节的跨度计算
 
 
 @dataclass
 class Section:
     title_norm: str
     start: int           # 标题块 idx（含）
-    end: int             # 下一标题块 idx（不含）
+    end: int             # 下一标题块 idx（不含，原子段——不含子节）
+    level: int = 1       # 标题层级
+
+    def span_end(self, sections) -> int:
+        """完整跨度终点（**含全部子节**）：到下一个 level<=自身 的标题块前。"""
+        for k in range(0, len(sections)):
+            if sections[k].start == self.start:
+                for s2 in sections[k + 1:]:
+                    if s2.level <= self.level:
+                        return s2.start
+                return sections[-1].end if sections else self.end
+        return self.end
 
 
 @dataclass
@@ -146,10 +162,22 @@ def is_heading(para) -> bool:
         return False
 
 
+def heading_level(para) -> int:
+    """标题层级：Heading N / 标题 N → N；非标题 0。层级用于区间跨度——
+    章节区间必须**包含全部子节**（『国别风险评级查询』到其『主界面』子标题就断了，
+    子节里的列表表格全被区间挡住——真实银行软需实测 F-004 万元句因此未定位）。"""
+    try:
+        name = (para.style.name or "") if para.style else ""
+    except Exception:
+        return 0
+    m = re.search(r"(?:Heading|标题)\s*(\d+)", name)
+    return int(m.group(1)) if m else 0
+
+
 def _full_text(element) -> str:
     """XML 层全量文本：遍历全部 w:t 节点（**含 w:hyperlink 内的 run**）。
 
-    python-docx 的 para.text / cell.text 不含超链接内文本——CR261622 实测 F-019
+    python-docx 的 para.text / cell.text 不含超链接内文本——真实银行软需实测 F-019
     的摘录「点击跳转额度中心"国别风险-国别风险限额台账"页面」整句在 hyperlink 里，
     para.text 只剩 '额度中心""展示限额使用情况。'，按 .text 建索引必然漏检。"""
     from docx.oxml.ns import qn
@@ -162,6 +190,18 @@ def _all_runs(para):
     from docx.oxml.ns import qn
     from docx.text.run import Run
     return [Run(r, para) for r in para._p.iter(qn("w:r"))]
+
+
+def _looks_like_toc(raw_text: str, para_xml: str, rel_pos: float) -> bool:
+    """目录条目段识别：①段内含 _Toc 书签超链接（Word 目录条目的结构特征）；
+    ②或位于文档前 20% 且为"短文本+行尾页码"形态（如『3.5. 数据管理目标- 62 -』）。
+    目录行永不作锚点——摘录取自目录形态文本时，正文命中之前会先撞上目录（真实银行软需实测）。"""
+    if "_Toc" in (para_xml or ""):
+        return True
+    t = (raw_text or "").strip()
+    if rel_pos <= 0.2 and 0 < len(t) <= 60 and re.search(r"[-–—]?\s*\d{1,3}\s*[-–—]?\s*$", t):
+        return True
+    return False
 
 
 def build_blocks(doc) -> list:
@@ -197,9 +237,11 @@ def build_blocks(doc) -> list:
     for item in doc.iter_inner_content():
         if isinstance(item, Paragraph):
             full = _full_text(item._p)
-            h = normalize(full) if is_heading(item) else ""
+            lv = heading_level(item)
+            h = normalize(full) if lv else ""
             anchor = item if (_all_runs(item) and full.strip()) else None
-            blocks.append(Block(counter[0], "para", anchor, normalize(full), [], -1, -1, h))
+            toc = _looks_like_toc(full, item._p.xml, counter[0] / max(1, len(doc.paragraphs)))
+            blocks.append(Block(counter[0], "para", anchor, normalize(full), [], -1, -1, h, toc, lv))
             counter[0] += 1
         elif isinstance(item, Table):
             walk_table(item, table_seq[0])
@@ -208,36 +250,83 @@ def build_blocks(doc) -> list:
 
 
 def build_sections(blocks) -> list:
-    secs, h_idxs = [], [b.idx for b in blocks if b.heading]
-    for j, i in enumerate(h_idxs):
-        end = h_idxs[j + 1] if j + 1 < len(h_idxs) else len(blocks)
-        secs.append(Section(blocks[i].heading, i, end))
+    secs, h_idxs = [], [b for b in blocks if b.heading]
+    for j, b in enumerate(h_idxs):
+        end = h_idxs[j + 1].idx if j + 1 < len(h_idxs) else len(blocks)
+        secs.append(Section(b.heading, b.idx, end, b.level or 9))
     return secs
 
 
-def _loc_words(loc: str) -> list:
-    """定位字段 → 标题词候选：整串（去编号）优先，【】内词次之。"""
-    key = normalize(re.sub(r"[§]\s*[\d.]+\s*", "", loc or ""))
-    words = [normalize(w) for w in re.findall(r"【([^】]{2,})】", loc or "")]
+def _loc_words(loc: str) -> tuple:
+    """定位字段 → (标题词候选, 章节号列表, §节名列表)。
+    - 章节号（§3.5）单独提取：标题带编号的文档可直接前缀匹配；
+    - §节名（§3.1.2.1 国别风险外部评级结果-新增 → 『国别风险外部评级结果』）：
+      **银行软需 docx 的正文标题通常不带编号**（编号在目录行/自动编号里，正文标题是
+      纯文字），§号本身匹配不到标题，必须拿 §号后紧跟的节名对齐标题（真实银行软需实测）。
+      节名取 §号后到 -/（/【 边界的第一段，≥3 字（『新增』『详情』等 2 字节名歧义
+      过大，放弃——由整串/摘录兜底）。
+    - 整串（去编号与圆括号注记）与【】内词仍提取。括号注记（（L1816-1818）（8 节）
+      等）必须剥除，否则整串永远匹配不到标题（真实银行软需实测）。"""
+    s = loc or ""
+    nums = [n.rstrip(".") for n in re.findall(r"[§]\s*([\d.]+)", s)]
+    names = []
+    for m in re.findall(r"[§]\s*[\d.]+\s*([^\s（(【§+]+)", s):
+        first = re.split(r"[-—–]", m)[0]
+        n = normalize(first)
+        if len(n) >= 3:
+            names.append(n)
+    s2 = re.sub(r"（[^）]*）", "", s)
+    s2 = re.sub(r"[§]\s*[\d.]+\s*", "", s2)
+    key = normalize(s2)
+    words = [normalize(w) for w in re.findall(r"【([^】]{2,})】", s)]
     out = [k for k in [key] + words if len(k) >= 2]
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out)), nums, list(dict.fromkeys(names))
+
+
+def _title_starts_with_num(title_norm: str, num: str) -> bool:
+    """标题是否以章节号开头（归一化后无空格，如『3.5.数据管理目标』）。
+    要求编号后紧跟分隔符，防『3.5』误配『3.50』『3.55』等更长编号。"""
+    return (title_norm.startswith(num + ".")
+            or title_norm.startswith(num + "、")
+            or title_norm.startswith(num + "．")
+            or title_norm == num)
 
 
 def section_candidates(sections, blocks, loc) -> tuple:
-    """返回 (候选块 idx 集合, 过滤成功?)。整串→词组逐级匹配标题；全失败退全文。"""
+    """返回 (候选块 idx 集合, 过滤成功?)。四层，逐层收紧：
+    ①章节号前缀（标题带编号的文档）；②§节名（标题 == 节名 或 startswith 节名）；
+    ③整串 key（≥4 字，substring in 标题）；④【】词组——每个词都必须**恰等于**某标题
+    才取该标题区间（substring 的 any/all 都会把『国家（地区）』错配到『国家（地区）
+    风险系数及转换系数』等含同词的无关章节，真实银行软需实测 F-011/F-028 降级锚因此挂错）。
+    全失败退全文（filtered=False，由 match_finding 施加『仅挂首处』约束）。"""
     all_idx = set(range(len(blocks)))
-    words = _loc_words(loc)
-    if not words:
-        return all_idx, False
+    words, nums, names = _loc_words(loc)
     union = set()
-    for sec in sections:
-        if any(w in sec.title_norm for w in words):
-            union.update(range(sec.start, sec.end))
-    if not union:
-        # 二级：所有词都出现在同一标题中（收紧，防单短词误命中）
+
+    def take(sec):
+        union.update(range(sec.start, sec.span_end(sections)))
+
+    if nums:
         for sec in sections:
-            if all(w in sec.title_norm for w in words):
-                union.update(range(sec.start, sec.end))
+            if any(_title_starts_with_num(sec.title_norm, n) for n in nums):
+                take(sec)
+    if not union and names:
+        for sec in sections:
+            if any(sec.title_norm == n or sec.title_norm.startswith(n) or n.startswith(sec.title_norm)
+                   for n in names):
+                take(sec)
+    if not union and words:
+        for w in words:
+            if len(w) >= 4:
+                for sec in sections:
+                    if w in sec.title_norm:
+                        take(sec)
+    if not union and words:
+        heads = {w: [s for s in sections if s.title_norm == w] for w in words}
+        if all(hs for hs in heads.values()):
+            for hs in heads.values():
+                for sec in hs:
+                    take(sec)
     return (union if union else all_idx), bool(union)
 
 
@@ -253,15 +342,32 @@ def _tokenize(chunk: str) -> list:
     return [t for t in c.split() if len(t) >= 2]
 
 
+def _is_num_token(t: str) -> bool:
+    """纯数字类 token（含小数点/百分号），如 30 / 2.00 / 95%。"""
+    return bool(re.fullmatch(r"[\d.,]+%?", t))
+
+
 def _l3_match(chunk: str, blocks, cand, cap: int):
     toks = _tokenize(chunk)
     if not toks:
         return [], 0, False
+    # 数字类 token 必须整词边界命中（"30" 不得子串命中 "20260630"——真实银行软需实测
+    # 修订记录日期行因此被误挂）；tokenize 滤掉单字符后只剩数字 token 时（表格行摘录
+    # "\| 7 \| D \| 0 \| 是 \| 30 \| 是 \|" 只剩 "30"），单个数字的覆盖度完全不可信，
+    # 拒绝 L3 兜底，让该 chunk 走未定位路径。
+    if all(_is_num_token(t) for t in toks):
+        return [], 0, False
     hits = []
     for i in cand:
         bn = blocks[i].text_norm
-        cov = sum(1 for t in toks if t in bn) / len(toks)
-        if cov >= L3_THRESHOLD:
+        cov = 0
+        for t in toks:
+            if _is_num_token(t):
+                if re.search(rf"(?<![\d.]){re.escape(t)}(?![\d.])", bn):
+                    cov += 1
+            elif t in bn:
+                cov += 1
+        if cov / len(toks) >= L3_THRESHOLD:
             hits.append(i)
     return _apply_cap(hits, cap)
 
@@ -289,9 +395,10 @@ def _subseq_match(needle: list, hay: list) -> bool:
 
 
 def match_chunk(chunk: str, blocks, cand, cap: int) -> ChunkResult:
-    """单 chunk 分层匹配：L1 子串→L1.5 前缀容错→L2 表格行→L2.5 PAIR→L3 token 兜底（低置信）。"""
+    """单 chunk 分层匹配：L1 子串→L1.5 前缀容错→L2 表格行→L2.5 PAIR→L3 token 兜底（低置信）。
+    目录条目块（is_toc）全层排除——摘录与目录行同文时（如『3.5. …- 62 -』形态）不得挂目录。"""
     atom = atomize(chunk)
-    ordered = sorted(cand)
+    ordered = [i for i in sorted(cand) if not blocks[i].is_toc]
 
     if atom.kind == "text":
         n = atom.tokens[0]
@@ -341,12 +448,34 @@ def match_finding(row, blocks, sections, cap) -> FindingResult:
     chunks = split_excerpts(row.get("原文摘录", ""))
     cres = [match_chunk(c, blocks, cand, cap) for c in chunks]
 
+    if not filtered:
+        # 定位区间未解析（cand 退化为全文）：通用短句全文撒网风险最高（"参见《总册》"
+        # 类句子全文十余处，命中前 3 处也多半与该 Finding 无关）——每 chunk 只挂首处，
+        # 其余在 note 声明（真实银行软需实测：F-038 曾因此把 1 处问题挂成 10 处）。
+        for cr in cres:
+            if len(cr.hits) > 1:
+                cr.total_hits = max(cr.total_hits, len(cr.hits))
+                cr.hits = cr.hits[:1]
+                cr.capped = True
+    else:
+        # 区间已解析但个别 chunk 零命中：长句（归一化 ≥20 字）在全文内基本唯一，
+        # 回退全文找 1 处（定位里 vs 双证据跨节时，另一节的 chunk 会被区间挡住——
+        # 真实银行软需 F-004 的公式句在『新增』节而区间解析到『查询』节）。
+        all_idx = sorted(set(range(len(blocks))))
+        for cr in cres:
+            if not cr.hits and len(normalize(cr.chunk.replace("\\|", ""))) >= 20:
+                retry = match_chunk(cr.chunk, blocks, set(all_idx), 1)
+                if retry.hits:
+                    cr.hits, cr.total_hits, cr.capped, cr.layer = \
+                        retry.hits, retry.total_hits, True, retry.layer
+
     notes = []
     for k, cr in enumerate(cres):
         if not cr.hits:
             notes.append(f"第{k + 1}处摘录未定位（L1-L3 无命中）")
         if cr.capped:
-            notes.append(f"第{k + 1}处命中 {cr.total_hits} 处仅标前 {len(cr.hits)} 处")
+            notes.append(f"第{k + 1}处命中 {cr.total_hits} 处仅标前 {len(cr.hits)} 处"
+                         + ("" if filtered else "（定位区间未解析，仅挂首处）"))
 
     anchors = list(dict.fromkeys(i for cr in cres for i in cr.hits))
     status, l4 = "未匹配", None
