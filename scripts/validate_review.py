@@ -321,7 +321,7 @@ def validate(workdir):
         src_docx = []
     if src_docx:
         VALID_WB_STATUS = ("已批注", "低置信", "章节降级", "未匹配")
-        WB_AUTHOR = "评审人"
+        WB_AUTHOR = "需求评审"
         wb_path = os.path.join(workdir, "docx-writeback.md")
         copies = sorted(f for f in os.listdir(workdir)
                         if f.endswith(".docx") and "评审批注" in f)

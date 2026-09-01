@@ -40,8 +40,8 @@ except ImportError:
     print("错误: 需要 python-docx>=1.2.0（uv pip install python-docx）", file=sys.stderr)
     sys.exit(2)
 
-AUTHOR = "评审人"          # Word 审阅者显示名——批注须可当作人工评审交付，不留工具痕迹
-INITIALS = "评"
+AUTHOR = "需求评审"        # Word 审阅者显示名——批注须可当作人工评审交付，不留工具痕迹
+INITIALS = "需评"
 DEFAULT_CAP = 3   # 多处命中的挂注上限。曾为 10——通用短句（"参见《总册》"）会撒网近全文，
                   # 读者看到的批注 2/3 与该 Finding 无关（真实银行软需 实测）；真需逐处提示的
                   # （如功能编号全占位）由批注文本写明"全文共 N 处"，不必逐处挂注。
